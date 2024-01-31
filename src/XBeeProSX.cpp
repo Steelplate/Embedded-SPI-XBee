@@ -111,8 +111,6 @@ std::pair<std::vector<uint8_t>, std::string> XbeeProSX::receive() {
 
     }
 
-    // Skip Frame ID
-    SPI.transfer(0x00);
 
     // Read and store source address (64-bit)
     for (int i = 0; i < 8; ++i) {
@@ -121,6 +119,9 @@ std::pair<std::vector<uint8_t>, std::string> XbeeProSX::receive() {
 
     // Skip reserved bytes
     SPI.transfer(0x00); 
+    SPI.transfer(0x00);
+
+    // Recieve Options
     SPI.transfer(0x00);
 
     // Read the message data
@@ -146,7 +147,6 @@ void XbeeProSX::broadcast(const std::string &message) {
     
 }
 
-
 void XbeeProSX::updateSubscribers() {
 
     if (isDataAvailable()) {
@@ -168,6 +168,7 @@ void XbeeProSX::updateSubscribers() {
     }
 
 }
+
 
 void XbeeProSX::sendToSubscribers(const std::string &message) {
 

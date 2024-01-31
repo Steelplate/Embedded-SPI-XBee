@@ -12,10 +12,11 @@ void setup() {
 
 void loop() {
 
-    std::string message = "hello world";
+    xbee.updateSubscribers();
 
-    xbee.broadcast(message);
+    // Example: send a message to all subscribers
+    xbee.sendToSubscribers("Hello, subscribers!");
 
-    delay(1000);
+    delay(10); // Delay to avoid spamming
 
 }
