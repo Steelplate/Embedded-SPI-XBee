@@ -12,11 +12,16 @@ void setup() {
 
 void loop() {
 
-    xbee.updateSubscribers();
+  xbee.updateSubscribers();
 
-    // Example: send a message to all subscribers
-    xbee.sendToSubscribers("Hello, subscribers!");
+  std::string message = "Hello, subscribers!";
+  // xbee.sendToSubscribers(message);
 
-    delay(10); // Delay to avoid spamming
+  delay(100);
+
+  float sensorReading = 25.7;
+  xbee.sendToSubscribers((const float&)sensorReading);
+
+  delay(1000);
 
 }

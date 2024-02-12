@@ -4,7 +4,6 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <vector>
-#include <string>
 #include <algorithm>
 
 class XbeeProSX {
@@ -17,19 +16,26 @@ public:
 
     bool isDataAvailable();
 
-    void send(const std::vector<uint8_t> &address, const std::string &message);
-    std::pair<std::vector<uint8_t>, std::string> receive();
+    template <typename T>
+    void send(const std::vector<uint8_t> &address, const T &data);
 
-    void broadcast(const std::string &message);
+    template <typename T>
+    std::pair<std::vector<uint8_t>, T> receive();
+
+    template <typename T>
+    void broadcast(const T &data);
 
     void updateSubscribers();
-    void sendToSubscribers(const std::string &message);
+
+    template <typename T>
+    void sendToSubscribers(const T &data);
 
 private:
 
     uint8_t _cs_pin;
-
     std::vector<std::vector<uint8_t>> subscribers; // List of subscribers
+
+    uint8_t calculateChecksum(const uint8_t *data, size_t length);
 
 };
 
