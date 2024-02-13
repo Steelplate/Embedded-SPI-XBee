@@ -1,6 +1,21 @@
 #include "XbeeProSX.h"
 
-XbeeProSX::XbeeProSX(uint8_t cs_pin) : _cs_pin(cs_pin) {}
+XbeeProSX::XbeeProSX(uint8_t cs_pin) : _cs_pin(cs_pin) {
+    subscribers = (uint64_t *)malloc(sizeof(uint64_t));
+    num_subscribers = 0;
+}
+
+void XbeeProSX::add_subscriber(uint64_t address) {
+    uint64_t *newList = (uint64_t *)calloc(num_subscribers + 1, sizeof(uint64_t));
+
+    memcpy(newList, subscribers, num_subscribers * sizeof(uint64_t));
+
+    num_subscribers += 1;
+    newList[num_subscribers] = address;
+
+    free(subscribers);
+    subscribers = newList;
+}
 
 void XbeeProSX::begin() {
 
@@ -26,12 +41,10 @@ bool XbeeProSX::isDataAvailable() {
 
 }
 
-void XbeeProSX::send(const std::vector<uint8_t> &address, const std::string &message) {
+void XbeeProSX::send(uint64_t address, const void *data, size_t size_bytes) {
+    size_t contentLength = size_bytes + 14; // Length calculation
 
-    size_t messageLength = message.length();
-    size_t contentLength = messageLength + 14; // Length calculation
-
-    uint8_t *packet = new uint8_t[contentLength + 4]; // +4 for start delimiter, length, and checksum
+    uint8_t *packet = new uint8_t[contentLength + 12]; // +4 for start delimiter, length, and checksum, +8 for address
 
     size_t index = 0;
 
@@ -43,10 +56,11 @@ void XbeeProSX::send(const std::vector<uint8_t> &address, const std::string &mes
     packet[index++] = 0x10; // Frame type
     packet[index++] = 0x00; // Frame ID
 
-    // Copy address
-    for (size_t i = 0; i < address.size(); ++i) {
-        packet[index++] = address[i];
+    for (int i = 0; i < 8; i++) {
+        packet[index++] = (address >> ((7 - i) * 8)) & 0xFF;
     }
+
+    index += 8;
 
     packet[index++] = 0xFF; // Reserved
     packet[index++] = 0xFE; // Reserved
@@ -55,11 +69,9 @@ void XbeeProSX::send(const std::vector<uint8_t> &address, const std::string &mes
 
     packet[index++] = 0x03; // Options byte
 
-    // Copy message
-    for (size_t i = 0; i < messageLength; ++i) {
-        packet[index++] = static_cast<uint8_t>(message[i]);
-    }
+    memcpy(&packet[index++], data, size_bytes);
 
+    index += size_bytes/sizeof(uint8_t);
     // Calculate and append checksum
     uint8_t checksum = 0xFF;
 
@@ -91,11 +103,9 @@ void XbeeProSX::send(const std::vector<uint8_t> &address, const std::string &mes
 
 }
 
-std::pair<std::vector<uint8_t>, std::string> XbeeProSX::receive() {
+ReceivePacket *XbeeProSX::receive() {
 
-    std::vector<uint8_t> address;
-    std::string message;
-
+    ReceivePacket *packet = (ReceivePacket *)calloc(0, sizeof(ReceivePacket));
     digitalWrite(_cs_pin, LOW);  // Asserts module to receive
 
     // Read length high and low byte
@@ -104,17 +114,17 @@ std::pair<std::vector<uint8_t>, std::string> XbeeProSX::receive() {
 
     // Read frame type, skip if not 0x90
     if (SPI.transfer(0x00) != 0x90) {
-
         digitalWrite(_cs_pin, HIGH);  // De-asserts module
 
-        return {address, message};
-
+        return packet;
     }
 
+    packet->length = length;
+    packet->data = new uint8_t[length - 12];
 
     // Read and store source address (64-bit)
-    for (int i = 0; i < 8; ++i) {
-        address.push_back(SPI.transfer(0x00));
+    for (int i = 0; i < 8; i++) {
+        packet->address |= (SPI.transfer(0x00) << (i * 8));
     }
 
     // Skip reserved bytes
@@ -126,56 +136,45 @@ std::pair<std::vector<uint8_t>, std::string> XbeeProSX::receive() {
 
     // Read the message data
     for (int i = 0; i < length - 12; ++i) {  // 12 bytes already read (Frame type, ID, address, reserved)
-        message += static_cast<char>(SPI.transfer(0x00));
+        packet->data[i] = SPI.transfer(0x00);
     }
 
     // Skip checksum
     SPI.transfer(0x00);
     digitalWrite(_cs_pin, HIGH);  // De-asserts module
 
-    return {address, message};
+    return packet;
 
 }
 
-void XbeeProSX::broadcast(const std::string &message) {
-
-    std::vector<uint8_t> broadcastAddress = {
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF
-    };
-
-    send(broadcastAddress, message);
+void XbeeProSX::broadcast(const void *data, size_t size) {
+    send(0x000000000000FFFF, data, size);
     
 }
 
 void XbeeProSX::updateSubscribers() {
 
-    if (isDataAvailable()) {
+    if (!isDataAvailable())
+        return;
 
-        auto data = receive();
+    ReceivePacket *message = receive();
 
-        std::vector<uint8_t> address = data.first;
-        std::string message = data.second;
+    if(message->length != 9) // Length of the word "subscribe"
+        return;
 
-        if (!address.empty() && message == "subscribe") {
-
-            // Check if the address is already in the list of subscribers
-            if (std::find(subscribers.begin(), subscribers.end(), address) == subscribers.end()) {
-                subscribers.push_back(address); // Add new subscriber
-            }
-
-        }
-
+    for (uint i = 0; i < num_subscribers; i++) {
+        if(subscribers[i] == message->address)
+            return;
     }
 
+    add_subscriber(message->address);
 }
 
 
-void XbeeProSX::sendToSubscribers(const std::string &message) {
+void XbeeProSX::sendToSubscribers(const void *data, size_t size) {
 
-    for (const auto& subscriberAddress : subscribers) {
-        send(subscriberAddress, message);
+    for (uint i = 0; i < num_subscribers; i++) {
+        send(subscribers[i], data, size);
     }
-
 }
-
 
